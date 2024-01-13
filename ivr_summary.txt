@@ -1,0 +1,147 @@
+CREATE OR REPLACE TABLE keepcoding.ivr_summary AS 
+
+WITH detail2 
+AS (SELECT detail2.*,
+      CASE
+      WHEN detail2.module_name = 'WELCOME' THEN '01_WELCOME'
+      WHEN detail2.module_name = 'IDENTIFICATION' THEN '02_IDENTIFICATION'
+      WHEN detail2.module_name = 'CQI' THEN '03_CQI'
+      WHEN detail2.module_name = 'AVERIA_MASIVA' THEN '04_AVERIA_MASIVA'
+      WHEN detail2.module_name = 'DEUDA' THEN '05_DEUDA'
+      WHEN detail2.module_name = 'OPEN_QUESTION' THEN '06_OPEN_QUESTION'
+      WHEN detail2.module_name = 'IDENTIFICATION' THEN '07_END'
+    END AS number_module
+  FROM
+    `keepcoding.ivr_detail` detail2
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY CAST(ivr_id AS STRING) ORDER BY start_date DESC, module_sequece DESC) = 1)
+
+  ,phone_number1
+AS ((SELECT ivr_id
+            , phone_number
+            , start_date
+         FROM keepcoding.ivr_detail 
+        WHERE phone_number <>  'UNKNOWN'
+      QUALIFY ROW_NUMBER () OVER (PARTITION BY CAST(ivr_id AS STRING) ORDER BY start_date DESC, document_type)=1))
+
+   ,ivr_result1
+AS ((SELECT ivr_id
+            , ivr_result
+            , start_date
+         FROM keepcoding.ivr_detail 
+        WHERE ivr_result <>  'UNKNOWN'
+      QUALIFY ROW_NUMBER () OVER (PARTITION BY CAST(ivr_id AS STRING) ORDER BY start_date DESC, document_type)=1))   
+
+ , identification
+AS ((SELECT ivr_id
+            , document_type
+            , document_identification
+            , start_date
+         FROM keepcoding.ivr_detail 
+        WHERE document_type <>  'UNKNOWN'
+      QUALIFY ROW_NUMBER () OVER (PARTITION BY CAST(ivr_id AS STRING) ORDER BY start_date DESC, document_type)=1)) 
+
+  , phone
+AS ((SELECT ivr_id
+            , customer_phone
+            , start_date
+         FROM keepcoding.ivr_detail 
+        WHERE customer_phone <>  'UNKNOWN'
+      QUALIFY ROW_NUMBER () OVER (PARTITION BY CAST(ivr_id AS STRING) ORDER BY start_date DESC, document_type)=1)) 
+
+  , b_account
+AS ((SELECT ivr_id
+            , billing_account_id
+            , start_date
+         FROM keepcoding.ivr_detail 
+        WHERE billing_account_id <>  'UNKNOWN'
+      QUALIFY ROW_NUMBER () OVER (PARTITION BY CAST(ivr_id AS STRING) ORDER BY start_date DESC, document_type)=1))  
+
+   , averia
+AS ((SELECT ivr_id
+          , CASE 
+              WHEN module_name <> 'AVERIA_MASIVA' THEN 1
+              END AS masiva_lg
+          , start_date
+         FROM keepcoding.ivr_detail 
+         QUALIFY ROW_NUMBER () OVER (PARTITION BY CAST(ivr_id AS STRING) ORDER BY start_date DESC, document_type)=1))      
+   
+, info_phone
+AS ((SELECT ivr_id
+          , step_name
+          , step_description_error       
+          , CASE 
+              WHEN step_name = 'CUSTOMERINFOBYDNI.TX' 
+               AND step_description_error = 'UNKNOWN'THEN '1'
+              ELSE '0' 
+              END AS info_by_phone_lg
+          , start_date
+         FROM keepcoding.ivr_detail 
+         QUALIFY ROW_NUMBER () OVER (PARTITION BY CAST(ivr_id AS STRING) ORDER BY start_date DESC, document_type)=1))
+
+  , info_dni
+AS ((SELECT ivr_id
+          , step_name
+          , step_description_error       
+          , CASE 
+              WHEN step_name = 'CUSTOMERINFOBYDNI.TX' 
+               AND step_description_error = 'UNKNOWN'THEN '1'
+              ELSE '0' 
+              END AS info_by_dni_lg
+          , start_date
+         FROM keepcoding.ivr_detail 
+         QUALIFY ROW_NUMBER () OVER (PARTITION BY CAST(ivr_id AS STRING) ORDER BY start_date DESC, document_type)=1))
+
+SELECT 
+       detail2.ivr_id
+     , phone_number1.phone_number
+     , ivr_result1.ivr_result
+     , CASE
+       WHEN STARTS_WITH (vdn_label,'ATC') THEN 'FRONT'
+       WHEN STARTS_WITH (vdn_label,'TECH') THEN 'TECH'
+       WHEN vdn_label = 'ABSORPTION'THEN 'ABSORPTION'
+       ELSE 'RESTO' 
+       END AS vdn_aggregation 
+     , detail2.start_date
+     , detail2.end_date
+     , total_duration
+     , customer_segment
+     , ivr_language
+     , steps_module
+     , module_aggregation
+     , identification.document_type
+     , identification.document_identification
+     , phone.customer_phone
+     , b_account.billing_account_id
+     , averia.masiva_lg
+     , info_phone.info_by_phone_lg
+     , info_dni.info_by_dni_lg
+     , IF(DATETIME_DIFF(LEAD(detail2.start_date) OVER(PARTITION BY phone.customer_phone ORDER BY detail2.start_date,phone_number1.phone_number),detail2.start_date,HOUR) < 24,1,0) AS    repeated_phone_24H
+      , IF(DATETIME_DIFF(LEAD(detail2.start_date) OVER(PARTITION BY phone.customer_phone ORDER BY detail2.start_date,phone_number1.phone_number),detail2.start_date,HOUR) > 24,1,0) AS cause_recall_phone_24H
+     
+        
+
+ FROM detail2
+ LEFT 
+ JOIN phone_number1
+   ON detail2.ivr_id = phone_number1.ivr_id
+ LEFT 
+ JOIN ivr_result1
+   ON detail2.ivr_id = ivr_result1.ivr_id
+  LEFT 
+ JOIN identification
+   ON detail2.ivr_id = identification.ivr_id
+ LEFT 
+ JOIN phone
+   ON detail2.ivr_id = phone.ivr_id 
+ LEFT 
+ JOIN b_account
+   ON detail2.ivr_id = b_account.ivr_id
+ LEFT 
+ JOIN averia
+ ON detail2.ivr_id = averia.ivr_id
+ LEFT 
+ JOIN info_phone
+ ON detail2.ivr_id = info_phone.ivr_id  
+ LEFT 
+ JOIN info_dni
+ ON detail2.ivr_id = info_dni.ivr_id 
